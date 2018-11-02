@@ -1,15 +1,18 @@
 #include <ArduinoJson.h>
 #include <RTClib.h>
 // be careful to use 1.2.0 version SD, other wise the file.seek() won't work
-#include <SD.h>
+//#include <SD.h>
+#include <SPI.h>
 #include <Wire.h>
+#include <WiFi101.h>
+#include <WiFiUdp.h>
 // system defines file for macro
 #include "sysdef.h"
 //  Test routine heavily inspired by wiring_analog.c from GITHUB site
 #include "Arduino.h"
 #include "wiring_private.h"
 #include "DHT.h"
-
+#include <SdFat.h>
 //If you get a compiler error saying that util/delay.h does not exist then just 
 //comment out the #include line for this in TLS2561.cpp from the adafruit library 
 #include "TSL2561.h"
@@ -26,6 +29,23 @@ const uint32_t  PinMASK = (1ul << g_APinDescription[PIN].ulPin);
 //
 //
 //******************************************************************************
+WiFiUDP Udp;
+SdFat SD;
+char ssid[] = SECRET_SSID;        // your network SSID (name)
+char pass[] = SECRET_PASS;    // your network password (use for WPA, or use as key for WEP)
+int keyIndex = 0;            // your network key Index number (needed only for WEP)
+int status = WL_IDLE_STATUS;
+const int chipSelect = 4;
+String upload_filename = "BIRD0.WAV";
+char server_ip[] = "10.0.0.193";
+
+unsigned int localPort = 2390;
+
+//int buf_size = WIFI_UPLOAD_BUFFER_SIZE;
+File audio_file;
+//byte content1[WIFI_UPLOAD_BUFFER_SIZE];
+int time_length=0;
+
 
 // variable for sensor and real-time clock
 DHT dht(DHTPIN, DHTTYPE);
@@ -69,6 +89,166 @@ bool hasSaved = 1;
 //	Functions define
 //
 //------------------------------------------------------------------------------
+inline void dis_wifi_control(){
+  digitalWrite(WIFI_CS, HIGH);
+}
+
+inline void en_wifi_control(){
+  digitalWrite(WIFI_CS, LOW);
+}
+
+void postData() {
+  // Combine yourdatacolumn header (yourdata=) with the data recorded from your arduino
+  // (yourarduinodata) and package them into the String yourdata which is what will be
+  // sent in your POST request
+  Serial.begin(9600);
+  Serial.println("Initializing SD card...");
+
+  // see if the card is present and can be initialized:
+  if (!SD.begin(SD_CS)) {
+    Serial.println("Card failed, or not present");
+    // don't do anything more:
+    return;
+  }
+  Serial.println("card initialized.");
+
+  // Check existance of file
+//  if(!SD.exists(filename)){
+//    Serial.println("No file: " + filename);
+//  }
+  audio_file = SD.open(filename, FILE_READ);
+    //  read_count++;
+  //audio_file.read(header, 44);
+  //audio_file.seek(44);
+
+  Serial.println("data to send :");
+
+  Serial.println("\nStarting connection to server...");   
+
+  if (1) {
+    Serial.println("Connecting successfully");
+    
+    int client_count = 10240;
+    //int filesize = 1024*200;
+    int filesize = audio_file.size();
+    int num_slices = filesize/BUFFER_SIZE;
+    //num_slices = 40;
+    //content1[64] = '\0';
+    Serial.println(num_slices);
+    int slice_left = filesize%BUFFER_SIZE;
+    Serial.println(slice_left);
+    Serial.print("Start Time: ");
+    int time = millis();
+    Serial.println(time);
+
+    
+    int count= 0;
+    int ret=0;
+    while(num_slices>0){
+        //Serial.println(num_slices);
+        audio_file.read(buffer, BUFFER_SIZE);
+        en_wifi_control();
+        Udp.beginPacket(server_ip, 8080);
+        ret = Udp.write(buffer, BUFFER_SIZE);
+        Udp.endPacket();
+        dis_wifi_control();
+        num_slices--;
+        //Serial.println(num_slices);
+        //Serial.println(ret);
+    }
+    audio_file.read(buffer,slice_left);
+    en_wifi_control();
+    Udp.beginPacket(server_ip, 8080);
+    Udp.write(buffer, slice_left);
+    Udp.endPacket();
+    dis_wifi_control();
+    audio_file.flush();
+    audio_file.close();
+    Serial.println("Data sent finish");
+    Serial.print("End time: ");
+    time_length = millis() - time;
+    time_length = time_length/1000.0;
+    time = millis();
+    Serial.println(time);
+    Serial.print("Spend ");
+    Serial.print(time_length);
+    Serial.print(" s to send data");
+    
+
+  } 
+  else {
+    // If you couldn't make a connection:
+    Serial.println("Connection failed");
+    Serial.println("Disconnecting.");
+
+  }
+  Serial.end();
+}
+
+void printWiFiStatus() {
+  // print the SSID of the network you're attached to:
+  Serial.begin(9600);
+  Serial.print("SSID: ");
+  Serial.println(WiFi.SSID());
+
+  // print your WiFi shield's IP address:
+  IPAddress ip = WiFi.localIP();
+  Serial.print("IP Address: ");
+  Serial.println(ip);
+
+  // print the received signal strength:
+  long rssi = WiFi.RSSI();
+  Serial.print("signal strength (RSSI):");
+  Serial.print(rssi);
+  Serial.println(" dBm");
+  Serial.end();
+}
+
+
+void wifi_init() {
+  //Initialize serial and wait for port to open:
+  //digitalWrite(WIFI_CS,LOW);
+  Serial.begin(9600);
+  status = WL_IDLE_STATUS;
+  while (!Serial) {
+    ; // wait for serial port to connect. Needed for native USB port only
+  }
+
+  // check for the presence of the shield:
+  if (WiFi.status() == WL_NO_SHIELD) {
+    Serial.println("WiFi shield not present");
+    // don't continue:
+    while (true);
+  }
+  // attempt to connect to WiFi network:
+  while ( status != WL_CONNECTED) {
+    Serial.print("Attempting to connect to SSID: ");
+    Serial.println(ssid);
+    // Connect to WPA/WPA2 network. Change this line if using open or WEP network:
+    status = WiFi.begin(ssid, pass);
+
+    // wait 10 seconds for connection:
+    delay(10000);
+  }
+  Serial.println("Connected to wifi");
+  printWiFiStatus();
+
+  Serial.println("\nStarting connection to server...");
+  Udp.begin(localPort);
+
+  Serial.end();
+}
+
+void wifi_deinit(){
+  Serial.begin(9600);
+  if(WiFi.status() == WL_CONNECTED) {
+    WiFi.disconnect();
+    WiFi.end();
+    Serial.println("disable the wifi module");
+  }
+  Serial.println("disable the wifi module");
+  Serial.end();
+}
 
 
 //This sets the sample rate for analog sampling
@@ -101,10 +281,16 @@ void sdInit(){
 	//  filename = "BIRD" + (String)fileNum + ".WAV";
 	//}
   fileNum = 0;
-  filename = "BIRD" + (String)fileNum + ".WAV";
+  filename = "BIRD0.WAV";
 	
 	//Set file creation date and open for writing
 	SdFile::dateTimeCallback(dateTime);
+  if(!SD.exists("BIRD0.WAV")){
+    SdFile temp_file;
+    temp_file.open("BIRD0.WAV",O_CREAT|O_WRITE);
+    temp_file.close();
+    
+  }
 	myFile = SD.open(filename, FILE_WRITE);
 	
 	if(!myFile){
@@ -390,6 +576,19 @@ void startTimer(int frequencyHz) {
 	while (TC->STATUS.bit.SYNCBUSY == 1);
 }
 
+void stopTimer(){
+  TcCount16* TC = (TcCount16*) TC3;
+  TC->INTENSET.reg = 0;              // disable all interrupts
+  TC->INTENSET.bit.MC0 = 1;          // enable compare match to CC0
+
+  // Enable InterruptVector
+  NVIC_DisableIRQ(TC3_IRQn);
+
+  // Enable TC
+  TC->CTRLA.reg &= ~TC_CTRLA_ENABLE;
+  while (TC->STATUS.bit.SYNCBUSY == 1); // wait for sync
+  
+}
 //##############################################################################
 // Stripped-down fast analogue read anaRead()
 // ulPin is the analog input pin number to be read.
@@ -446,14 +645,11 @@ void TC3_Handler() {
 	  //reads from the activity detector (sound threshold) on pin 7 
 	  //Increments a counter that will reach it's maximum value after 2 seconds of inactivity
 	  //This will be used later to trigger the end of the recording
-	  saveToCard = digitalRead(7);
-	  if(!saveToCard){
-	    if (counter < limit){
+	  if (counter < 22*1800*limit){
 	      ++counter;
-	    }
 	  }
 	  else{
-	    counter = 0;
+	    //counter = 0;
 	  }
 	}
 }
@@ -483,10 +679,11 @@ void recordToggle(){
 // Function to delete all saved file in SD card
 void delete_all_file() {
 	String target_name = "BIRD0.WAV";
+  char target_name_c[] =  "BIRD0.WAV";
 	int target_filenum = 1;
   digitalWrite(recordPin, HIGH);
-	while(SD.exists(target_name)){
-    	SD.remove(target_name);
+	while(SD.exists(target_name_c)){
+    	SD.remove(target_name_c);
     	target_name = "BIRD" + (String)target_filenum + ".WAV";
       ++target_filenum;
 	}	
@@ -513,9 +710,14 @@ void setup()
 	//Initialize the sd card and the sd-activity led on pin 13
 	pinMode(sdPin, OUTPUT);
 	pinMode(recordPin, OUTPUT);
+  pinMode(WIFI_CS, OUTPUT); 
 	digitalWrite(sdPin,LOW);
 	digitalWrite(recordPin, LOW);
-	if(!SD.begin(8)){
+  dis_wifi_control();
+  WiFi.setPins(WIFI_CS,7,5);
+  //wifi_init();
+  
+	if(!SD.begin(SD_CS)){
 	  Serial.begin(9600);
 	  Serial.println("Cannot connect to SD Card");
 	  Serial.end();
@@ -523,9 +725,9 @@ void setup()
 	  while(1);
 	}
 	readConfig(); //Grab Data from config file if it exists
-	delete_all_file();
+	//delete_all_file();
 	sdInit();
-	pinMode(PIN, OUTPUT);        // setup timing marker
+	//pinMode(PIN, OUTPUT);        // setup timing marker
 	
 	//###################################################################################
 	// ADC setup stuff
@@ -533,7 +735,6 @@ void setup()
 	ADCsync();
 	ADC->INPUTCTRL.bit.GAIN = ADC_INPUTCTRL_GAIN_1X_Val;      // Gain select as 1X
 	ADC->REFCTRL.bit.REFSEL = ADC_REFCTRL_REFSEL_INTVCC0_Val; //  2.2297 V Supply VDDANA
-	
 	
 	// Set sample length and averaging
 	ADCsync();
@@ -548,7 +749,7 @@ void setup()
 	anaRead();  //Discard first conversion after setup as ref changed
 	
 	//Start reading from the activity detection pin and start sampling from the analog pin
-	pinMode(7, INPUT);
+	//pinMode(7, INPUT);
 	startTimer(sampleRate);
 	//Attaches an interrupt to the button on pin 12 to flip a variable that will tell the device not to open a new file after the current 
 	//one finishes, so the sd-card can be safely removed
@@ -560,11 +761,20 @@ void loop()
 	if(fileOpen){
 	  //When 2 seconds of inactivity has passed this will finish the file by adding the header then closing the file
 	  //If the stop button (d12) has not been pressed it will open a new file for writing
-	  if(counter >= limit){
+	  if((counter >= 22*1800*limit) || !doRecord){
 	    if(!hasSaved || !doRecord){
 	      makeHeader(myFile.size()-44);
 	      myFile.flush();
 	      myFile.close();
+
+        en_wifi_control();
+        wifi_init();
+        postData();
+        delay(1000);
+        wifi_deinit();
+        dis_wifi_control();
+
+       
 	      digitalWrite(recordPin, LOW);
 	      fileOpen = 0;
 	      digitalWrite(sdPin, !fileOpen);
@@ -573,7 +783,9 @@ void loop()
 	      }
 	      hasSaved = 1;
 	      buttonPressed = 0;
+        
 	    }
+      counter = 0;
 	  }
 	  //When less than 2 seconds of inactivity has passed this will write data from the buffer to the currently open file
 	  else{
@@ -604,8 +816,23 @@ void loop()
 	}
 	//This should restart recording if the button on d12 is pressed again after recording has stopped
 	else if(doRecord){
+    stopTimer();
+    en_wifi_control();
+    wifi_init();
+    postData();
+    delay(1000);
+    wifi_deinit();
+    dis_wifi_control();
+    //en_wifi_control();
+    //pinMode(WIFI_CS, OUTPUT);
+    //WiFi.setPins(WIFI_CS,7,5);
+    //dis_wifi_control();
+    //wifi_init();
+    startTimer(sampleRate);
+    //digitalWrite(SD_CS, LOW);
 	  sdInit();
 	  buttonPressed = 0;
+    //doRecord = 0;
 	}
 }
 
