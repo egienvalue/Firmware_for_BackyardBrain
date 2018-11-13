@@ -19,5 +19,5 @@
 #define BUFFER_SIZE 24000
 #define WIFI_UPLOAD_BUFFER_SIZE 5000
 
-#define SECRET_SSID "1839b5"
-#define SECRET_PASS "jiazhaoli"
+#define SECRET_SSID "Jun'siPhone"
+#define SECRET_PASS "12345678a"

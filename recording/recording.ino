@@ -30,6 +30,7 @@ const uint32_t  PinMASK = (1ul << g_APinDescription[PIN].ulPin);
 //
 //******************************************************************************
 WiFiUDP Udp;
+WiFiClient client;
 SdFat SD;
 char ssid[] = SECRET_SSID;        // your network SSID (name)
 char pass[] = SECRET_PASS;    // your network password (use for WPA, or use as key for WEP)
@@ -38,6 +39,7 @@ int status = WL_IDLE_STATUS;
 const int chipSelect = 4;
 String upload_filename = "BIRD0.WAV";
 char server_ip[] = "10.0.0.193";
+char back_yard_brain[] = "songbird.backyardbrains.com";
 
 unsigned int localPort = 2390;
 
@@ -72,7 +74,7 @@ byte *anaHead = &buffer[0];
 byte *sdHead = &buffer[0];
 
 const long limit = 2 * sampleRate;
-long counter = limit;
+long counter = 0;
 bool saveToCard = 0;
 
 uint32_t Status = 0x00000000;
@@ -116,7 +118,9 @@ void postData() {
 //  if(!SD.exists(filename)){
 //    Serial.println("No file: " + filename);
 //  }
-  audio_file = SD.open(filename, FILE_READ);
+  char char_array[30] = {'\0'};
+  filename.toCharArray(char_array, 30);
+  audio_file = SD.open(char_array, FILE_READ);
     //  read_count++;
   //audio_file.read(header, 44);
   //audio_file.seek(44);
@@ -131,11 +135,13 @@ void postData() {
     int client_count = 10240;
     //int filesize = 1024*200;
     int filesize = audio_file.size();
-    int num_slices = filesize/BUFFER_SIZE;
+    int slice_size = 1024*1024;
+    int num_slices = filesize/slice_size;
+    //num_slices = 1;
     //num_slices = 40;
     //content1[64] = '\0';
     Serial.println(num_slices);
-    int slice_left = filesize%BUFFER_SIZE;
+    int slice_left = filesize%slice_size;
     Serial.println(slice_left);
     Serial.print("Start Time: ");
     int time = millis();
@@ -144,24 +150,108 @@ void postData() {
     
     int count= 0;
     int ret=0;
-    while(num_slices>0){
+//    while(num_slices>0){
+//        //Serial.println(num_slices);
+//        audio_file.read(buffer, BUFFER_SIZE);
+//        en_wifi_control();
+//        Udp.beginPacket(server_ip, 8080);
+//        ret = Udp.write(buffer, BUFFER_SIZE);
+//        Udp.endPacket();
+//        dis_wifi_control();
+//        num_slices--;
+//        //Serial.println(num_slices);
+//        //Serial.println(ret);
+//    }
+//    audio_file.read(buffer,slice_left);
+//    en_wifi_control();
+//    Udp.beginPacket(server_ip, 8080);
+//    Udp.write(buffer, slice_left);
+//    Udp.endPacket();
+//    dis_wifi_control();
+    client.stop();
+    if(client.connect(back_yard_brain,80)) {
+      Serial.println("connecting success");
+
+      while(num_slices>0){
+        client.stop();
+        client.connect(back_yard_brain,80);
         //Serial.println(num_slices);
-        audio_file.read(buffer, BUFFER_SIZE);
+        //audio_file.read(buffer, slice_size);
         en_wifi_control();
-        Udp.beginPacket(server_ip, 8080);
-        ret = Udp.write(buffer, BUFFER_SIZE);
-        Udp.endPacket();
+        client.println("POST /api/device HTTP/1.1");
+        client.println("Host: songbird.backyardbrains.com");
+        client.println("User-Agent: Arduino/1.0");
+        client.println("Connection: keep-alive");
+        client.println("Content-Type: text/html");
+        client.print("Content-Length: ");
+        client.println(slice_size);
+        client.println();
+        int ret1=0;
+        int chunk_size = 1400;
+        int chunk_number = slice_size/chunk_size;
+        int chunk_left = slice_size%1400;
+        int m=0;
+        for(m=0;m<chunk_number;m++){
+          dis_wifi_control();
+          audio_file.read(buffer, chunk_size);
+          en_wifi_control();
+          ret1 = client.write((uint8_t*)buffer, chunk_size);
+          //Serial.println(ret1);
+        }
+        dis_wifi_control();
+        audio_file.read(buffer, chunk_left);
+        en_wifi_control();
+        client.write((uint8_t*)buffer, chunk_left);
+        
+        //Serial.println(ret1);
+//        for(int c=0;c<slice_size;c++){
+//        client.print((char)buffer[c]);
+//        }        //client.println();
         dis_wifi_control();
         num_slices--;
-        //Serial.println(num_slices);
+        Serial.println(num_slices);
         //Serial.println(ret);
+      }
+      client.stop();
+      client.connect(back_yard_brain,80);
+      //audio_file.read(buffer, slice_left);
+      en_wifi_control();
+      client.println("POST /api/device HTTP/1.1");
+      client.println("Host: songbird.backyardbrains.com");
+      client.println("User-Agent: Arduino/1.0");
+      client.println("Connection: close");
+      client.println("Content-Type: text/html");
+      client.print("Content-Length: ");
+      client.println(slice_left);
+      client.println();
+      int ret1=0;
+      int chunk_size = 1400;
+      int chunk_number = slice_left/chunk_size;
+      int chunk_left = slice_left%1400;
+      int m=0;
+      for(m=0;m<chunk_number;m++){
+        dis_wifi_control();
+        audio_file.read(buffer, chunk_size);
+        en_wifi_control();
+        ret1 = client.write((uint8_t*)buffer, chunk_size);
+        //Serial.println(ret1);
+      }
+      dis_wifi_control();
+      audio_file.read(buffer, chunk_left);
+      en_wifi_control();
+      client.write((uint8_t*)buffer, chunk_left);
+//      int ret1=0;
+//      ret1 = client.write((uint8_t*)buffer, slice_left);
+//      Serial.println(ret1);
+//      //for(int c=0;c<slice_left;c++){
+//      //  client.print((char)buffer[c]);
+//      //}        //client.println();
+      dis_wifi_control();
+    } else {
+
+      Serial.println("connection fail");
     }
-    audio_file.read(buffer,slice_left);
-    en_wifi_control();
-    Udp.beginPacket(server_ip, 8080);
-    Udp.write(buffer, slice_left);
-    Udp.endPacket();
-    dis_wifi_control();
+    
     audio_file.flush();
     audio_file.close();
     Serial.println("Data sent finish");
@@ -274,24 +364,25 @@ void dateTime(uint16_t* date, uint16_t* time) {
 //Opens a new file on the sd-card for writing
 void sdInit(){
 	Serial.begin(9600);
-	
 	//Loop ensures that files won't be overwritten on the card in the device is reset
 	//while(SD.exists(filename)){
 	//  ++fileNum;
 	//  filename = "BIRD" + (String)fileNum + ".WAV";
 	//}
-  fileNum = 0;
-  filename = "BIRD0.WAV";
+  //fileNum = 0;
+  //filename = "BIRD" + (String)fileNum + ".WAV";
+  char char_array[30] = {'\0'};
 	
 	//Set file creation date and open for writing
 	SdFile::dateTimeCallback(dateTime);
-  if(!SD.exists("BIRD0.WAV")){
+  filename.toCharArray(char_array, sizeof(char_array));
+  if(!SD.exists(char_array)){
     SdFile temp_file;
-    temp_file.open("BIRD0.WAV",O_CREAT|O_WRITE);
+    temp_file.open(char_array,O_CREAT|O_WRITE);
     temp_file.close();
     
   }
-	myFile = SD.open(filename, FILE_WRITE);
+	myFile = SD.open(char_array, FILE_WRITE);
 	
 	if(!myFile){
 	  Serial.println("Open file fail - sdINIT");
@@ -684,8 +775,8 @@ void delete_all_file() {
   digitalWrite(recordPin, HIGH);
 	while(SD.exists(target_name_c)){
     	SD.remove(target_name_c);
-    	target_name = "BIRD" + (String)target_filenum + ".WAV";
-      ++target_filenum;
+    	//target_name = "BIRD" + (String)target_filenum + ".WAV";
+      //++target_filenum;
 	}	
   digitalWrite(recordPin, LOW);
 }
@@ -706,6 +797,7 @@ void setup()
 	  //This will occur if the external rtc loses power, eg. the coincell dies or is removed
 	  rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
 	}
+  //rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
 	
 	//Initialize the sd card and the sd-activity led on pin 13
 	pinMode(sdPin, OUTPUT);
@@ -726,6 +818,15 @@ void setup()
 	}
 	readConfig(); //Grab Data from config file if it exists
 	//delete_all_file();
+  fileNum = 0;
+  char char_array[30] = {'\0'};
+  filename = "BIRD" + (String)fileNum + ".WAV";
+  filename.toCharArray(char_array, sizeof(char_array));
+  while(SD.exists(char_array)){
+    ++fileNum;
+    filename = "BIRD" + (String)fileNum + ".WAV";
+    filename.toCharArray(char_array, sizeof(char_array));
+  }
 	sdInit();
 	//pinMode(PIN, OUTPUT);        // setup timing marker
 	
@@ -759,35 +860,45 @@ void setup()
 void loop()
 {
 	if(fileOpen){
-	  //When 2 seconds of inactivity has passed this will finish the file by adding the header then closing the file
-	  //If the stop button (d12) has not been pressed it will open a new file for writing
-	  if((counter >= 22*1800*limit) || !doRecord){
+
+    // When press the button or recording last 22 hour, it will recalculate the file header
+	  if((counter >= 22*1800*limit) || (!doRecord)){
 	    if(!hasSaved || !doRecord){
 	      makeHeader(myFile.size()-44);
 	      myFile.flush();
 	      myFile.close();
-
+        stopTimer();
+        // Code here for uploading
+        
+        /*
         en_wifi_control();
         wifi_init();
         postData();
         delay(1000);
         wifi_deinit();
         dis_wifi_control();
-
-       
+        */
+        startTimer(sampleRate);
+        
+        if(counter >= 22*1800*limit){
+          fileNum++;
+          filename = "BIRD" + (String)fileNum + ".WAV";
+        }
 	      digitalWrite(recordPin, LOW);
 	      fileOpen = 0;
 	      digitalWrite(sdPin, !fileOpen);
 	      if(doRecord){
+          SD.begin(SD_CS);
 	        sdInit();
 	      }
 	      hasSaved = 1;
 	      buttonPressed = 0;
-        
+        counter = 0;
 	    }
       counter = 0;
 	  }
-	  //When less than 2 seconds of inactivity has passed this will write data from the buffer to the currently open file
+
+    // Continuously writing data in buffer into file.
 	  else{
 	    digitalWrite(recordPin, HIGH);
 	    hasSaved = 0;
@@ -814,8 +925,12 @@ void loop()
 	    }
 	  }
 	}
+	
 	//This should restart recording if the button on d12 is pressed again after recording has stopped
 	else if(doRecord){
+
+    // Code for wifi uploading
+    /*
     stopTimer();
     en_wifi_control();
     wifi_init();
@@ -823,14 +938,14 @@ void loop()
     delay(1000);
     wifi_deinit();
     dis_wifi_control();
-    //en_wifi_control();
-    //pinMode(WIFI_CS, OUTPUT);
-    //WiFi.setPins(WIFI_CS,7,5);
-    //dis_wifi_control();
-    //wifi_init();
     startTimer(sampleRate);
-    //digitalWrite(SD_CS, LOW);
+    */
+
+    // Remain the begin here for hot swapping of SD card
+    SD.begin(SD_CS);
 	  sdInit();
+    digitalWrite(recordPin, HIGH);
+    //startTimer(sampleRate);
 	  buttonPressed = 0;
     //doRecord = 0;
 	}
