@@ -1,6 +1,6 @@
 #include <ArduinoJson.h>
 #include <RTClib.h>
-// be careful to use 1.2.0 version SD, other wise the file.seek() won't work
+// be careful to use 1.2.0 version SD, otherwise the file.seek() won't work
 //#include <SD.h>
 #include <SPI.h>
 #include <Wire.h>
